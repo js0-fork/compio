@@ -151,30 +151,43 @@ impl AsyncifyPool {
         f: BoxedDispatchable,
     ) -> Result<(), DispatchError<BoxedDispatchable>> {
         let thread_limit = self.thread_limit;
-        let total = self.total_counter.load(Ordering::SeqCst);
 
-        if total < thread_limit {
-            // Under limit, we can spawn a worker.
-            // We increment total_counter BEFORE spawn to prevent over-spawning.
-            self.total_counter.fetch_add(1, Ordering::SeqCst);
-            std::thread::spawn(worker(
-                self.receiver.clone(),
-                self.total_counter.clone(),
-                self.idle_counter.clone(),
-                self.recv_timeout,
-            ));
-            // After spawning, the buffer might still be full but the new worker
-            // will soon clear it. We use a blocking send here to be sure.
-            self.sender.send(f).ok();
-            Ok(())
-        } else {
-            // At limit and no one is idle.
-            // One last try_send in case someone just became idle.
-            match self.sender.try_send(f) {
-                Ok(_) => Ok(()),
-                Err(crossfire::TrySendError::Full(f)) => Err(DispatchError(f)),
-                Err(crossfire::TrySendError::Disconnected(_)) => unreachable!(),
+        // Atomically reserve a worker slot if under the limit.
+        loop {
+            let total = self.total_counter.load(Ordering::SeqCst);
+            if total >= thread_limit {
+                break;
             }
+
+            match self.total_counter.compare_exchange(
+                total,
+                total + 1,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
+                Ok(_) => {
+                    // Successfully reserved a slot; spawn a worker.
+                    std::thread::spawn(worker(
+                        self.receiver.clone(),
+                        self.total_counter.clone(),
+                        self.idle_counter.clone(),
+                        self.recv_timeout,
+                    ));
+                    self.sender
+                        .send(f)
+                        .expect("worker pool channel unexpectedly disconnected");
+                    return Ok(());
+                }
+                Err(_) => continue,
+            }
+        }
+
+        // At limit and no one is idle.
+        // One last try_send in case someone just became idle.
+        match self.sender.try_send(f) {
+            Ok(_) => Ok(()),
+            Err(crossfire::TrySendError::Full(f)) => Err(DispatchError(f)),
+            Err(crossfire::TrySendError::Disconnected(_)) => unreachable!(),
         }
     }
 }

@@ -245,7 +245,13 @@ impl ConnectionInner {
             timer.reset(state.conn.poll_timeout());
 
             while let Some(event) = state.conn.poll_endpoint_events() {
-                let _ = self.events_tx.try_send((self.handle, event));
+                if let Err(e) = self.events_tx.try_send((self.handle, event)) {
+                    compio_log::warn!(
+                        "failed to send endpoint event for {:?}: {:?}",
+                        self.handle,
+                        e
+                    );
+                }
             }
 
             while let Some(event) = state.conn.poll() {
