@@ -22,6 +22,9 @@ mod tcp;
 mod udp;
 mod unix;
 
+#[cfg(all(feature = "extern_resolve", not(feature = "disable_extern_resolve_when_all_features")))]
+pub use resolve::sys::ExternResolve;
+
 pub use cmsg::*;
 /// Providing functionalities to wait for readiness.
 #[deprecated(since = "0.12.0", note = "Use `compio::runtime::fd::PollFd` instead")]

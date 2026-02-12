@@ -1,5 +1,8 @@
 cfg_if::cfg_if! {
-    if #[cfg(windows)] {
+    if #[cfg(all(feature = "extern_resolve", not(feature = "disable_extern_resolve_when_all_features")))] {
+        #[path = "extern_resolve.rs"]
+        mod sys;
+    } else if #[cfg(windows)] {
         #[path = "windows.rs"]
         mod sys;
     } else if #[cfg(unix)] {
